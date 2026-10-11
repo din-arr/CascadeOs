@@ -1,0 +1,12 @@
+CASCADEOS — NEUTRAL BLACK THEME
+
+Updated app/globals.css in the authoritative design layer.
+- Neutral near-black backgrounds (#040507 / #090b0e) instead of green-tinted surfaces.
+- Dark graphite panels, restrained gray borders, high-contrast off-white typography.
+- Large green headings converted to off-white; only select editorial accents use muted glacier blue.
+- Emerald (#66b69c) reserved for positive/safe status indicators.
+- Blue (#76bde0) reserved for interactive buttons, focus, and model controls.
+- Flood imagery and simulation state/logic remain unchanged.
+
+Run: npm install && npm run dev
+Open the URL printed by Next.js. Stop any older Next.js servers first.

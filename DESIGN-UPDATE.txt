@@ -1,0 +1,18 @@
+CASCADEOS — OBSIDIAN DESIGN UPDATE
+
+Changes made:
+- Replaced conflicting late CSS theme overrides with one coherent, scoped design layer.
+- Homepage and /simulation: near-black graphite backgrounds, restrained emerald and electric-blue accents.
+- Custom scenario form: neutral dark inputs, readable labels, better active steps and buttons.
+- Headings on both pages: Outfit display font (real 800 weight), tighter balanced spacing, no white outlines.
+- Preserved the 3D model, camera controls, calculations, and scenario workflow files unchanged.
+
+How to use:
+1. Back up your existing project folder.
+2. Extract this ZIP into a new folder (or copy the included app/, components/, lib/, public/ and package files into your project).
+3. Open that folder in VS Code and run: npm install
+4. Run: npm run dev
+5. Open the URL shown in the terminal (normally http://localhost:3000).
+6. Hard refresh the browser if you previously opened the old site.
+
+Note: This update focuses on visual design and typography; it does not change simulation logic.

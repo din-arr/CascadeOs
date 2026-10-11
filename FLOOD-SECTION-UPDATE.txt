@@ -1,0 +1,7 @@
+Flood Intelligence section update (October 2026)
+- Replaced wide, visually sparse river image with existing licensed aerial flood-city image.
+- Rebalanced heading scale and spacing for better visual hierarchy.
+- Added a compact, responsive, clearly labelled synthetic signal visualization on the right.
+- Applied dark black/graphite gradient and muted glacier-blue highlights.
+- No simulation algorithms, data entry, routing, or 3D controls were changed.
+- Verification: scenario tests and scenario TypeScript check passed. Full lint/build not verified in this environment (dependencies unavailable).
