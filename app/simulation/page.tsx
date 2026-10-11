@@ -33,7 +33,36 @@ const statuses: [string, keyof SimulationResult["statusCounts"], string][] = [
 ];
 
 function Field({ label, value, onChange, type = "text", min }: { label: string; value: string | number; onChange: (value: string) => void; type?: string; min?: number }) {
-  return <label className="scenario-field"><span>{label}</span><input type={type} min={min} value={value} onChange={(event) => onChange(event.target.value)} /></label>;
+  const [text, setText] = useState(String(value));
+
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setText(String(value));
+  }, [value, editing]);
+
+  return (
+    <label className="scenario-field">
+      <span>{label}</span>
+      <input
+        type={type}
+        min={min}
+        value={editing ? text : String(value)}
+        onFocus={() => setEditing(true)}
+        onChange={(event) => {
+          const s = event.target.value;
+          setText(s);
+          if (type !== "number" || (s !== "" && Number.isFinite(Number(s)))) {
+            onChange(s);
+          }
+        }}
+        onBlur={() => {
+          setEditing(false);
+          setText(String(value));
+        }}
+      />
+    </label>
+  );
 }
 
 function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
