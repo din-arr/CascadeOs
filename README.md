@@ -210,3 +210,35 @@ External data retrieval, browser notification permissions, and interactive 3D re
 CascadeOS explores how communities could move from reactive flood response toward earlier, more understandable, data-informed preparedness. By combining interactive scenario comparisons, upstream signals, relocation constraints, and a serverless AWS backend, it offers a practical prototype for climate-resilience education and planning research.
 
 Developed for the WeMakeDevs AWS Environmental Hackathon by students of IIIT Lucknow.
+
+
+## Quick judge walkthrough
+
+Open `/simulation` and choose **RUN GUIDED EXAMPLE**. The app loads a validated, editable synthetic campus scenario and computes the evacuation planning results immediately. Follow the three on-page links to inspect the flood model and Cascade Clock, compare the baseline with an earlier gate closure (including route and departure-time differences), and review the relocation summary. Download the PDF report to inspect assumptions and constraints.
+
+To try your own inputs, choose **CREATE CUSTOM SCENARIO**, then **LOAD EXAMPLE INPUTS** for a valid editable starting point or fill in all seven tabs. Changes are not official flood forecasts or emergency instructions. Local drafts are saved in browser storage; they are not equivalent to a cloud save.
+
+### Final deployment checks
+
+- `npm ci`, `npm run test:scenario`, `npm run check:scenario`, and `npm run build`
+- Verify guided example, gate what-if, PDF export, custom input clearing, and mobile layout in a browser.
+- Verify the deployed AWS API workflow separately using authorized credentials; the frontend's local save does not imply DynamoDB persistence.
+- Never commit `.env*`, AWS credentials, or personal data.
+
+### Refined simulation dashboard (October 2026)
+
+- The **Explore Demo** control now opens an explicit choice: **Start Guided Example** or **Reset Campus Demo**. Opening the menu does not change the current scenario.
+- The scenario name, navigation, and workflow share a single compact toolbar. Local draft management is under **Saved scenarios & draft tools**.
+- The 3D model and key decision monitors appear first. Use **Show All Monitors** to reveal the secondary capacity-deficit and aggregate tracking cards.
+- The upstream rainfall / river-gauge connector and synthetic flood-arrival what-if model remain available under the expandable **Optional · Advanced Model** section.
+- The PDF export action is at the end of the decision workflow. For edited custom scenarios, it is disabled until **Run Simulation** recalculates results.
+- The core simulation, cloud API route, model assumptions, and report-generation logic are unchanged by this presentation pass.
+
+### Final judging clarity pass (October 2026)
+
+- **Scenario decision brief:** shows the actual calculated arrival assumption, last safe departure (or **UNVERIFIED** when constraints fail), evacuation demand, shelter shortfall and next modeled planning action. If custom inputs change, the brief waits for a new simulation.
+- **Calculated comparison verdict:** explains route changes, modeled departure-window changes, shelter deficit and feasibility for the early-gate-failure what-if. No departure delta is invented when either scenario is infeasible.
+- **Methodology disclosure:** a collapsible explanation of arrival assumptions, infrastructure dependencies, shelter/transport constraints and non-operational limitations.
+- **Explicit cloud save:** the *Saved scenarios & draft tools* panel now has a separate **SAVE SCENARIO TO AWS** action for validated, already-run custom scenarios. It POSTs `{ "action": "save", "scenario": ... }` to the existing `/api/scenarios` route. The UI reports success only after a successful API response; it displays a scenario ID only if one is actually returned. An error or unavailable AWS configuration is shown as a failure, never a fake success. The deployed Lambda must accept this request shape; adapt it to the deployed backend contract if different. Cloud save is not automatic and does not replace local drafts.
+
+The simulation calculations, upstream what-if estimator, PDF report generation, existing server-side AWS credentials flow and 3D scene are not changed by this pass.

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FloodAsset } from "@/components/FloodScene";
 import { downloadScenarioPdf } from "@/lib/report";
+import { comparisonVerdict, decisionPriorities, decisionStatus } from "@/lib/decision";
 import { estimateFloodArrival, estimateExposedPeople, type FloodSignalInputs } from "@/lib/upstream";
 import { assessLiveSignalAlert, type LiveFloodSignals } from "@/lib/live-signals";
 import CinematicMotion from "@/components/CinematicMotion";
@@ -52,7 +53,7 @@ function Field({ label, value, onChange, type = "text", min }: { label: string; 
         onChange={(event) => {
           const s = event.target.value;
           setText(s);
-          if (type !== "number" || (s !== "" && Number.isFinite(Number(s)))) {
+          if (type !== "number" || (s.trim() !== "" && Number.isFinite(Number(s)) && (min === undefined || Number(s) >= min))) {
             onChange(s);
           }
         }}
@@ -141,6 +142,9 @@ export default function SimulationPage() {
   const [scenario, setScenario] = useState<Scenario>(() => createDemoScenario());
   const [result, setResult] = useState<SimulationResult>(() => calculateScenario(createDemoScenario()));
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [demoChooserOpen, setDemoChooserOpen] = useState(false);
+  const [showAllMonitors, setShowAllMonitors] = useState(false);
+  const [walkthroughActive, setWalkthroughActive] = useState(false);
   const [gateOneEarlier, setGateOneEarlier] = useState(false);
   const [waterLevel, setWaterLevel] = useState(0.9);
   const [timelineProgress, setTimelineProgress] = useState(0.28);
@@ -152,6 +156,8 @@ export default function SimulationPage() {
   const [errors, setErrors] = useState<string[]>([]);
   const [savedScenarios, setSavedScenarios] = useState<Scenario[]>([]);
   const [notice, setNotice] = useState("");
+  const [inputsPending, setInputsPending] = useState(false);
+  const [cloudSave, setCloudSave] = useState<{ status: "idle" | "saving" | "saved" | "error"; message: string; id: string | null }>({ status: "idle", message: "", id: null });
   const [upstream, setUpstream] = useState<FloodSignalInputs>({
     localDepth: 0.9, upstreamPeakDepth: 1.2, retentionPercent: 25,
     channelLossPercent: 20, travelMinutes: 90,
@@ -346,6 +352,7 @@ export default function SimulationPage() {
 const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
 
   const useExample = () => {
+    resetCloudSave();
     const next = createExampleCustomScenario();
     setScenario(next);
     setMode("custom");
@@ -355,16 +362,47 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     setUpstreamApplied(false);
     setGateOneEarlier(false);
     setErrors([]);
+    setInputsPending(true);
     setNotice("Example inputs loaded. Review and run the simulation.");
   };
 
+  const startGuidedDemo = () => {
+    resetCloudSave();
+    const next = createExampleCustomScenario();
+    const issues = validateScenario(next);
+    if (issues.length) {
+      setNotice("The example scenario needs review before it can be demonstrated.");
+      setErrors(issues);
+      setBuilderOpen(true);
+      return;
+    }
+    setScenario(next);
+    setMode("custom");
+    setResult(calculateScenario(next));
+    setWaterLevel(next.flood.floodDepth);
+    setUpstream(previous => ({ ...previous, localDepth: next.flood.floodDepth }));
+    setUpstreamApplied(false);
+    setGateOneEarlier(false);
+    setPlaying(false);
+    setTimelineProgress(0.28);
+    setBuilderOpen(false);
+    setSelected(null);
+    setErrors([]);
+    setInputsPending(false);
+    setDemoChooserOpen(false);
+    setWalkthroughActive(true);
+    setNotice("Guided example ready. Explore the flood model, compare gate failure, and review the relocation plan below.");
+    window.requestAnimationFrame(() => document.getElementById("simulation-model")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
   const loadSaved = (id: string) => {
+    resetCloudSave();
     const found = savedScenarios.find(item => item.id === id);
     if (!found) return;
     const loaded = structuredClone(found);
     setScenario(loaded); setMode("custom"); setResult(calculateScenario(loaded));
     setWaterLevel(loaded.flood.floodDepth); setUpstream(previous => ({ ...previous, localDepth: loaded.flood.floodDepth })); setUpstreamApplied(false); setGateOneEarlier(false); setBuilderOpen(false);
-    setSelected(null); setNotice(`Loaded saved scenario: ${loaded.name}`);
+    setSelected(null); setInputsPending(false); setNotice(`Loaded saved scenario: ${loaded.name}`);
   };
   const deleteSaved = () => {
     if (mode !== "custom") return;
@@ -373,10 +411,12 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     catch { setNotice("Could not update local storage."); }
   };
   const activateCustom = () => {
+    resetCloudSave();
+    setWalkthroughActive(false);
     if (mode === "custom") { setBuilderOpen(true); return; }
     const next = createCustomScenario();
     setMode("custom"); setScenario(next); setResult(calculateScenario(next));
-    setGateOneEarlier(false); setWaterLevel(0); setUpstream(previous => ({ ...previous, localDepth: 0 })); setUpstreamApplied(false); setBuilderOpen(true); setErrors([]);
+    setGateOneEarlier(false); setWaterLevel(0); setUpstream(previous => ({ ...previous, localDepth: 0 })); setUpstreamApplied(false); setBuilderOpen(true); setErrors([]); setInputsPending(true);
   };
   const runCustom = () => {
     const nextErrors = validateScenario(scenario);
@@ -386,7 +426,7 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     setResult(calculateScenario(scenario));
     setWaterLevel(scenario.flood.floodDepth);
     setUpstream(previous => ({ ...previous, localDepth: scenario.flood.floodDepth })); setUpstreamApplied(false);
-    setBuilderOpen(false); setNotice("Custom scenario validated and recalculated. All results are illustrative.");
+    setBuilderOpen(false); setInputsPending(false); setNotice("Custom scenario validated and recalculated. All results are illustrative.");
   };
   const saveScenario = () => {
     try {
@@ -399,10 +439,41 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     }
     catch { setErrors(["Could not save locally. Check browser storage permissions or available space."]); }
   };
+  const saveToCloud = async () => {
+    if (mode !== "custom" || inputsPending || cloudSave.status === "saving") return;
+    const issues = validateScenario(scenario);
+    if (issues.length) {
+      setCloudSave({ status: "error", message: "Validate and run this scenario before saving to AWS.", id: null });
+      setErrors(issues);
+      setBuilderOpen(true);
+      return;
+    }
+    setCloudSave({ status: "saving", message: "Saving through API Gateway and Lambda…", id: null });
+    try {
+      const response = await fetch("/api/scenarios", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "save", scenario }),
+      });
+      const payload: unknown = await response.json();
+      const body = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+      const nested = body.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data as Record<string, unknown> : {};
+      const rawId = body.scenarioId ?? body.scenario_id ?? body.id ?? nested.scenarioId ?? nested.id;
+      const id = typeof rawId === "string" || typeof rawId === "number" ? String(rawId) : null;
+      if (!response.ok || body.error || body.success === false || (typeof body.statusCode === "number" && body.statusCode >= 400)) {
+        throw new Error(typeof body.error === "string" ? body.error : `AWS request failed (${response.status}).`);
+      }
+      setCloudSave({ status: "saved", message: id ? "Scenario saved through AWS API." : "AWS API returned success (no scenario ID in response).", id });
+    } catch (error) {
+      setCloudSave({ status: "error", message: error instanceof Error ? error.message : "AWS save failed. Check server credentials and API availability.", id: null });
+    }
+  };
+  const resetCloudSave = () => setCloudSave({ status: "idle", message: "", id: null });
   const resetDemo = () => {
+    resetCloudSave();
     const next = createDemoScenario();
     setMode("demo"); setScenario(next); setResult(calculateScenario(next));
-    setBuilderOpen(false); setGateOneEarlier(false); setWaterLevel(.9); setUpstream(previous => ({ ...previous, localDepth: .9 })); setUpstreamApplied(false); setSelected(null); setErrors([]); setNotice("Illustrative demo restored.");
+    setBuilderOpen(false); setGateOneEarlier(false); setWaterLevel(.9); setUpstream(previous => ({ ...previous, localDepth: .9 })); setUpstreamApplied(false); setSelected(null); setErrors([]); setInputsPending(false); setDemoChooserOpen(false); setWalkthroughActive(false); setNotice("Illustrative campus demo restored.");
   };
   const toggleWhatIf = () => {
     const next = !gateOneEarlier;
@@ -410,6 +481,7 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     setResult(calculateScenario(scenario, { gateOneEarlier: next, disruptedGateId }));
   };
   const changeWaterLevel = (value: number) => {
+    resetCloudSave();
     setWaterLevel(value);
     const next = { ...scenario, flood: { ...scenario.flood, floodDepth: value } };
     setScenario(next);
@@ -418,6 +490,7 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     setUpstreamApplied(false);
   };
   const applyUpstream = () => {
+    resetCloudSave();
     const next = { ...scenario, updatedAt: new Date().toISOString(), flood: { ...scenario.flood, floodDepth: upstreamImpact.downstreamDepth, arrivalMinutes: upstreamImpact.estimatedArrivalMinutes ?? scenario.flood.arrivalMinutes, arrivalMethod: upstreamImpact.estimatedArrivalMinutes === null ? scenario.flood.arrivalMethod : "simplified" as const, dataSource: "Synthetic upstream rainfall and river-rise what-if (not a live forecast)" } };
     setScenario(next);
     setWaterLevel(upstreamImpact.downstreamDepth);
@@ -434,23 +507,62 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
     { label: `${disruptedGateName.toUpperCase()} - 2 HOURS`, value: earlyGateResult, kind: "changed" },
   ];
   const fmtTime = (n: number | null) => n === null ? "UNVERIFIED" : `${Math.floor(Math.max(0, n) / 60)}h ${Math.round(Math.max(0, n) % 60)}m`;
+  const departureDelta = baseResult.lastSafeDepartureMinutes !== null && earlyGateResult.lastSafeDepartureMinutes !== null
+    ? earlyGateResult.lastSafeDepartureMinutes - baseResult.lastSafeDepartureMinutes : null;
+  const routeChanged = baseResult.route?.id !== earlyGateResult.route?.id;
+  const decision = decisionStatus(state);
+  const priorities = decisionPriorities(scenario, state);
+  const comparisonSummary = comparisonVerdict(baseResult, earlyGateResult);
   return <main className="simulation-command">
     <CinematicMotion />
     <header className="command-header"><Link href="/" className="dark-brand">CASCADE<span>OS</span></Link><div className="command-context"><strong>FLOOD SIMULATION</strong><span>{scenario.location || "CUSTOM CAMPUS"} / {mode === "demo" ? "ILLUSTRATIVE DEMO" : "LOCAL CUSTOM MODEL"}</span></div><div className="command-status"><i /> {mode === "demo" ? "DEMO MODE" : "CUSTOM MODE"} <Link href="/">BACK TO HOME ↗</Link></div></header>
     <div className="command-shell">
       <div className="command-disclaimer">ILLUSTRATIVE DECISION SUPPORT · OPTIONAL NEAR-REAL-TIME WEATHER / US GAUGE INPUTS · NOT AN OFFICIAL FLOOD WARNING</div>
-      <div className="scenario-modebar"><span>ACTIVE SCENARIO / <b>{scenario.name}</b></span><button type="button" className={mode === "demo" ? "active" : ""} onClick={resetDemo}>EXPLORE DEMO</button><button type="button" className={mode === "custom" ? "active" : ""} onClick={activateCustom}>CREATE CUSTOM SCENARIO</button>{mode === "custom" && <button type="button" onClick={() => setBuilderOpen((open) => !open)}>{builderOpen ? "HIDE BUILDER" : "EDIT INPUTS"}</button>}</div>
-      <div className="scenario-utilitybar" aria-label="Scenario tools">
-        <div className="scenario-utility-start"><span>WORKFLOW /</span> <b>INPUT → PREDICT → COMPARE → EXPORT</b></div>
-        <div className="scenario-utility-actions">
-          {savedScenarios.length > 0 && <label className="saved-picker"><span>LOAD SAVED</span><select aria-label="Load a saved scenario" value="" onChange={e => loadSaved(e.target.value)}><option value="">Choose a draft…</option>{savedScenarios.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-          {mode === "custom" && <button type="button" onClick={saveScenario}>SAVE SCENARIO</button>}
-          {mode === "custom" && savedScenarios.some(item => item.id === scenario.id) && <button type="button" onClick={deleteSaved}>DELETE SAVED</button>}
-          <button type="button" className="report-download" onClick={() => downloadScenarioPdf(scenario, baseResult, earlyGateResult)}>DOWNLOAD PDF REPORT ↓</button>
+      <div className="scenario-topbar" aria-label="Scenario navigation">
+        <div className="scenario-topbar-title"><span>ACTIVE SCENARIO</span><strong>{scenario.name}</strong><small>INPUT → SIMULATE → COMPARE → EXPORT</small></div>
+        <div className="scenario-topbar-actions">
+          <button type="button" className={demoChooserOpen ? "active" : ""} aria-expanded={demoChooserOpen} aria-controls="demo-choices" onClick={() => setDemoChooserOpen(open => !open)}>EXPLORE DEMO {demoChooserOpen ? "−" : "+"}</button>
+          <button type="button" className={mode === "custom" ? "active" : ""} onClick={() => { setDemoChooserOpen(false); activateCustom(); }}>CREATE CUSTOM SCENARIO</button>
+          {mode === "custom" && <button type="button" onClick={() => setBuilderOpen(open => !open)}>{builderOpen ? "HIDE INPUTS" : "EDIT INPUTS"}</button>}
         </div>
       </div>
-      {notice && <div className="scenario-notice" role="status">{notice}<button type="button" onClick={() => setNotice("")} aria-label="Dismiss notice">×</button></div>}
-      {builderOpen && <ScenarioBuilder scenario={scenario} onChange={value => { setScenario(value); setErrors([]); }} onRun={runCustom} onSave={saveScenario} onExample={useExample} onClose={() => setBuilderOpen(false)} errors={errors} />}
+      {demoChooserOpen && <section id="demo-choices" className="demo-choices" aria-label="Choose a demonstration">
+        <div><strong>Choose how to explore</strong><p>Nothing changes until you select a demo. Both examples use illustrative inputs.</p></div>
+        <div className="demo-choice-actions"><button type="button" className="demo-choice-primary" onClick={startGuidedDemo}>START GUIDED EXAMPLE ↗</button><button type="button" onClick={resetDemo}>RESET CAMPUS DEMO ↺</button></div>
+      </section>}
+      <details className="scenario-tools"><summary>Saved scenarios &amp; draft tools <span>OPTIONAL</span></summary>
+        <div className="scenario-tools-content">
+          {savedScenarios.length > 0 && <label className="saved-picker"><span>LOAD SAVED</span><select aria-label="Load a saved scenario" value="" onChange={e => loadSaved(e.target.value)}><option value="">Choose a draft…</option>{savedScenarios.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+          {mode === "custom" && <button type="button" onClick={saveScenario}>SAVE LOCAL DRAFT</button>}
+          {mode === "custom" && <button type="button" disabled={inputsPending || cloudSave.status === "saving"} onClick={() => void saveToCloud()}>{cloudSave.status === "saving" ? "SAVING TO AWS…" : "SAVE SCENARIO TO AWS ↗"}</button>}
+          {mode === "custom" && <p className="cloud-explainer">Cloud save is separate from local drafts. Clicking sends this scenario to the configured AWS API.</p>}
+          {cloudSave.status !== "idle" && <div className={`cloud-feedback cloud-${cloudSave.status}`} role="status"><strong>{cloudSave.status === "saved" ? "AWS API CONFIRMED" : cloudSave.status === "error" ? "AWS SAVE NOT CONFIRMED" : "AWS REQUEST IN PROGRESS"}</strong><span>{cloudSave.message}</span>{cloudSave.status === "saved" && cloudSave.id && <code>Scenario ID: {cloudSave.id}</code>}</div>}
+          {mode === "custom" && savedScenarios.some(item => item.id === scenario.id) && <button type="button" onClick={deleteSaved}>DELETE LOCAL DRAFT</button>}
+          {savedScenarios.length === 0 && mode === "demo" && <span>No local drafts yet. Create a scenario to save one.</span>}
+        </div>
+      </details>
+      {notice && <div className="scenario-notice compact-notice" role="status">{notice}<button type="button" onClick={() => setNotice("")} aria-label="Dismiss notice">×</button></div>}
+      {walkthroughActive && <nav className="guided-route" aria-label="Guided demo steps"><span>GUIDED EXAMPLE</span><a href="#simulation-model">01 · SIMULATE ↓</a><a href="#scenario-comparison">02 · COMPARE ↓</a><a href="#relocation-summary">03 · DECIDE ↓</a><button type="button" onClick={() => setWalkthroughActive(false)} aria-label="Close guided navigation">×</button></nav>}
+      {inputsPending && mode === "custom" && <div className="scenario-notice" role="status">Inputs have changed since the last simulation. Run Simulation to update the main dashboard and departure estimate.</div>}
+      {builderOpen && <ScenarioBuilder scenario={scenario} onChange={value => { setScenario(value); setErrors([]); setInputsPending(true); resetCloudSave(); }} onRun={runCustom} onSave={saveScenario} onExample={useExample} onClose={() => setBuilderOpen(false)} errors={errors} />}
+      <section id="simulation-model" className="command-viewport"><div className="viewport-main"><div className="viewport-heading"><div><p className="eyebrow glacier">ILLUSTRATIVE 3D MODEL / {mode === "demo" ? "DEMO" : "CUSTOM SCHEMATIC"}</p><h1>Campus flood state</h1>{mode === "custom" && modelAssets.length === 0 && <p className="model-explainer">Add buildings, infrastructure and shelters in the builder to populate this schematic 3D scene.</p>}</div><span>DRAG TO ORBIT · SCROLL TO ZOOM · SELECT AN ASSET</span></div><FloodScene waterLevel={visualDepth} assets={mode === "custom" ? modelAssets : undefined} custom={mode === "custom"} timelineProgress={timelineProgress} playing={playing} speed={speed} alternateRoute={gateOneEarlier} cameraMode={cameraMode} resetKey={resetKey} onSelect={setSelected} /><div className="scene-controls command-controls"><label><span>SCENARIO PEAK WATER DEPTH <b>{waterLevel.toFixed(1)}M</b></span><input aria-label="Water level" type="range" min="0" max="10" step="0.1" value={waterLevel} onChange={(event) => changeWaterLevel(Number(event.target.value))} /></label><div className="timeline-control"><div className="timeline-control-heading"><span>ILLUSTRATIVE FLOOD PROGRESSION / {timelineLabel} · CURRENT DEPTH {visualDepth.toFixed(1)}M</span><span>{playing ? "RUNNING" : "PAUSED"}</span></div><input aria-label="FLOOD PROGRESSION" type="range" min="0" max="1" step="0.01" value={timelineProgress} onChange={(event) => setTimelineProgress(Number(event.target.value))} /></div><p className="model-explainer">The progression slider animates a simplified rise from 0 to the scenario peak depth over a 12-hour visualization. It is not a measured flood forecast. The Cascade Clock uses the scenario assumptions above, not the animation position.</p><div className="scene-buttons"><button type="button" onClick={() => setPlaying((value) => !value)}>{playing ? "PAUSE" : "PLAY"} TIMELINE</button><button type="button" onClick={() => { setPlaying(false); setTimelineProgress(0); }}>RESET</button><button type="button" onClick={() => setSpeed((value) => value === 2 ? 0.5 : value + 0.5)}>SPEED {speed}×</button><button type="button" onClick={() => setCameraMode((value) => value === "orbit" ? "top" : "orbit")}>{cameraMode === "orbit" ? "TOP VIEW" : "ORBIT VIEW"}</button><button type="button" onClick={() => setResetKey((value) => value + 1)}>RESET CAMERA</button></div></div></div>
+        <aside className="clock-panel"><div className="panel-kicker">CASCADE CLOCK <span>STATUS / {state.feasible ? "ACTIVE" : "REVIEW"}</span></div><div className="clock-deadline"><small>LAST SAFE DEPARTURE / SCENARIO ESTIMATE</small><strong className={state.lastSafeDepartureMinutes === null ? "unverified-clock" : ""}>{state.lastSafeDepartureMinutes === null ? "UNVERIFIED" : `${Math.floor(Math.max(0, state.lastSafeDepartureMinutes) / 60)}h ${Math.max(0, state.lastSafeDepartureMinutes) % 60}m`}</strong><span>estimated departure margin / <b>{state.safetyMarginMinutes === null ? "—" : `${Math.max(0, state.safetyMarginMinutes)}m`}</b></span></div><div className="deadline-list command-deadlines"><div><span>Flood arrival</span><b>{state.floodArrivalMinutes === null ? "INSUFFICIENT DATA" : `${Math.floor(state.floodArrivalMinutes / 60)}h ${Math.round(state.floodArrivalMinutes % 60)}m`}</b></div>{state.infrastructure.slice(0, 3).map((asset) => <div key={asset.id}><span>{asset.name}</span><b className={asset.status === "critical" ? "critical-value" : ""}>{`${Math.floor(asset.failureMinutes / 60)}h ${asset.failureMinutes % 60}m`}</b></div>)}</div><div className="command-action"><small>NEXT RECOMMENDED ACTION</small><strong>{state.nextAction}</strong></div><div className="clock-state"><span>MODEL STATUS</span><b><i /> {state.estimationNote}</b></div>{selected ? <div className="asset-inspector command-inspector"><div className="inspector-heading"><span>SELECTED ASSET</span><button type="button" aria-label="Close selected asset" onClick={() => setSelected(null)}>×</button></div><h3>{selected.name}</h3><dl><div><dt>GROUND ELEVATION</dt><dd>{selected.elevation.toFixed(1)}M</dd></div><div><dt>WATER DEPTH</dt><dd>{selectedDepth.toFixed(1)}M</dd></div><div><dt>STATUS</dt><dd className={`status-${selectedStatus.toLowerCase().replace(" ", "-")}`}>{selectedStatus}</dd></div><div><dt>FAILURE DEADLINE</dt><dd>{selected.deadline}</dd></div></dl></div> : <div className="command-hint">SELECT A BUILDING, GATE, PUMP, OR ELECTRICAL ASSET IN THE MODEL TO INSPECT ITS CURRENT STATE.</div>}</aside></section>
+      <section className="decision-brief" aria-label="Evacuation decision summary">
+        <div className="decision-brief-head"><div><span>SCENARIO DECISION BRIEF / ILLUSTRATIVE</span><h2>What needs attention first?</h2></div><span className={`decision-status decision-${inputsPending ? "unknown" : decision.tone}`}>{inputsPending ? "RECALCULATION NEEDED" : decision.label}</span></div>
+        {inputsPending ? <div className="decision-pending">Inputs have changed. Run Simulation to generate an updated decision brief.</div> : <>
+          <div className="decision-stats">
+            <div><span>FLOOD ARRIVAL ESTIMATE</span><strong>{fmtTime(state.floodArrivalMinutes)}</strong></div>
+            <div><span>LAST SAFE DEPARTURE</span><strong>{fmtTime(state.lastSafeDepartureMinutes)}</strong></div>
+            <div><span>PEOPLE TO EVACUATE</span><strong>{scenario.population.evacuationDemand ?? scenario.population.total}</strong></div>
+            <div><span>SHELTER SHORTFALL</span><strong className={state.shelterDeficit > 0 ? "decision-alert" : ""}>{state.shelterDeficit}</strong></div>
+          </div>
+          <div className="decision-brief-action"><div><span>PRIORITY PLANNING ACTION</span><p>{state.nextAction}</p></div><a href="#relocation-summary">VIEW RELOCATION PLAN ↓</a></div>
+          {!state.feasible && <div className="decision-constraints"><strong>CONSTRAINTS TO REVIEW</strong><ul>{priorities.map(item => <li key={item}>{item}</li>)}</ul><p>A departure time is not shown as safe unless route, transport, shelter and timing constraints are all satisfied.</p></div>}
+        </>}
+      </section>
+      <div className="monitor-heading"><div><span>DECISION DASHBOARD</span><h2>What the scenario means.</h2></div><button type="button" aria-expanded={showAllMonitors} onClick={() => setShowAllMonitors(value => !value)}>{showAllMonitors ? "SHOW ESSENTIALS −" : "SHOW ALL MONITORS +"}</button></div>
+      <section className={`ops-grid ${showAllMonitors ? "show-details" : ""}`}><div className="ops-panel risk-monitor"><div className="panel-kicker">01 / INFRASTRUCTURE RISK MONITOR <span>{mode === "demo" ? "SYNTHETIC MODEL" : "CALCULATED"}</span></div><div className="risk-list">{state.infrastructure.slice(0, 3).map((asset) => <div key={asset.id}><i className={asset.status === "critical" ? "critical" : "warning"} /><span><b>{asset.name}</b><small>{asset.failureReason}</small></span><strong className={asset.status === "critical" ? "critical-value" : ""}>{Math.floor(asset.failureMinutes / 60)}h {asset.failureMinutes % 60}m</strong></div>)}</div></div><div className="ops-panel capacity-monitor"><div className="panel-kicker">02 / SHELTER CAPACITY <span>LIMITING RESOURCE</span></div><div className="capacity-card">{["beds", "water", "food", "sanitation"].map((name) => <div className="capacity-row" key={name}><span>{name}</span><i><u style={{ width: `${Math.min(100, (resourceTotals[name as keyof typeof resourceTotals] / Math.max(1, scenario.population.total)) * 100)}%` }} /></i><b>{resourceTotals[name as keyof typeof resourceTotals]}</b></div>)}<div className="capacity-total"><span>EFFECTIVE REMAINING CAPACITY</span><strong>{state.remainingCapacity}</strong></div></div></div><div className="ops-panel shortage-monitor"><div className="shortage-photo"><Image src="/images/cascade-emergency-shelter.jpg" alt="Illustrative emergency storm shelter facility" fill sizes="(max-width: 650px) 100vw, 150px" /></div><div><div className="panel-kicker">03 / CAPACITY DEFICIT</div><strong className="shortage-number">{state.shelterDeficit}</strong><span>people without available shelter capacity</span><small>{state.accessibleDeficit} accessible places still required · {state.accommodationDeficit} category-specific accommodation places required</small></div></div><div className="ops-panel route-monitor"><div className="panel-kicker">04 / EVACUATION ROUTE PLANNER <span>{state.route ? "ROUTE AVAILABLE" : "NO ROUTE"}</span></div><div className="route-strip"><b>TO EVACUATE<br /><strong>{scenario.population.evacuationDemand ?? scenario.population.total}</strong></b><i /><span>{state.route?.name ?? "UNREACHABLE"}</span><i /><b>SHELTER<br /><strong>{state.effectiveCapacity} SAFE</strong></b></div><div className="route-meta"><span>{state.trips} TRIPS REQUIRED</span><span className="safe-text">{state.feasible ? "FEASIBLE PLAN" : "REVIEW CONSTRAINTS"}</span></div></div><div className="ops-panel tracking-monitor"><div className="panel-kicker">05 / STUDENT SAFETY TRACKING <span>{mode === "demo" ? "SYNTHETIC COHORT" : "AGGREGATE INPUT"}</span></div><div className="tracking-grid">{statuses.map(([label, key, kind]) => <div className={kind} key={label}><span>{label}</span><strong>{state.statusCounts[key]}</strong><small>of {scenario.population.total}</small></div>)}</div></div><div className="ops-panel what-if command-what-if"><div className="panel-kicker">06 / WHAT IF? SCENARIO SIMULATOR</div><button type="button" className={`scenario-toggle ${gateOneEarlier ? "active" : ""}`} disabled={mode === "custom" && !disruptedGate} onClick={toggleWhatIf}><span className="toggle-dot" /> {disruptedGateName} closes 2 hours earlier</button><div className="scenario-result"><div><small>ROUTE</small><strong>{state.route?.name ?? "No feasible route"}</strong></div><div><small>LAST SAFE DEPARTURE / SCENARIO ESTIMATE</small><strong className={state.lastSafeDepartureMinutes === null ? "unverified-clock" : ""}>{state.lastSafeDepartureMinutes === null ? "UNVERIFIED" : `${state.lastSafeDepartureMinutes}m`}</strong></div><div><small>RECOMMENDATION</small><strong className={gateOneEarlier ? "alert-text" : ""}>{state.nextAction}</strong></div></div></div></section>
+      <details className="advanced-panel" id="upstream-tools"><summary><span><small>OPTIONAL · ADVANCED MODEL</small><strong>Upstream rainfall, river gauges &amp; flood-arrival what-if</strong><em>Explore optional environmental readings and synthetic flood-wave assumptions</em></span><b>EXPAND +</b></summary>
       <section id="upstream" className="upstream-panel" aria-label="Upstream rainfall river rise and downstream flood arrival estimator">
         <div className="live-monitor" aria-label="Near-real-time upstream rainfall and river gauge monitoring">
           <div className="live-monitor-heading"><div><p className="eyebrow glacier">LIVE DATA CONNECTOR / PUBLIC SOURCES</p><h3>Upstream rainfall and river gauge monitor</h3><p>Fetch near-real-time rainfall for any coordinates. Optional USGS gauge readings are available for US stations. Live inputs are separate from the synthetic flood-travel model.</p></div><span className={liveEnabled ? "live-indicator live-on" : "live-indicator"}>{liveEnabled ? "MONITORING / 5 MIN" : "MONITOR OFF"}</span></div>
@@ -529,10 +641,8 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
           <button type="button" onClick={applyUpstream}>{upstreamApplied ? "APPLIED ✓ · REAPPLY" : "APPLY DEPTH + ARRIVAL TO DASHBOARD ↗"}</button>
         </div>
       </section>
-      <section className="command-viewport"><div className="viewport-main"><div className="viewport-heading"><div><p className="eyebrow glacier">ILLUSTRATIVE 3D MODEL / {mode === "demo" ? "DEMO" : "CUSTOM SCHEMATIC"}</p><h1>Campus flood state</h1>{mode === "custom" && modelAssets.length === 0 && <p className="model-explainer">Add buildings, infrastructure and shelters in the builder to populate this schematic 3D scene.</p>}</div><span>DRAG TO ORBIT · SCROLL TO ZOOM · SELECT AN ASSET</span></div><FloodScene waterLevel={visualDepth} assets={mode === "custom" ? modelAssets : undefined} custom={mode === "custom"} timelineProgress={timelineProgress} playing={playing} speed={speed} alternateRoute={gateOneEarlier} cameraMode={cameraMode} resetKey={resetKey} onSelect={setSelected} /><div className="scene-controls command-controls"><label><span>SCENARIO PEAK WATER DEPTH <b>{waterLevel.toFixed(1)}M</b></span><input aria-label="Water level" type="range" min="0" max="10" step="0.1" value={waterLevel} onChange={(event) => changeWaterLevel(Number(event.target.value))} /></label><div className="timeline-control"><div className="timeline-control-heading"><span>ILLUSTRATIVE FLOOD PROGRESSION / {timelineLabel} · CURRENT DEPTH {visualDepth.toFixed(1)}M</span><span>{playing ? "RUNNING" : "PAUSED"}</span></div><input aria-label="FLOOD PROGRESSION" type="range" min="0" max="1" step="0.01" value={timelineProgress} onChange={(event) => setTimelineProgress(Number(event.target.value))} /></div><p className="model-explainer">The progression slider animates a simplified rise from 0 to the scenario peak depth over a 12-hour visualization. It is not a measured flood forecast. The Cascade Clock uses the scenario assumptions above, not the animation position.</p><div className="scene-buttons"><button type="button" onClick={() => setPlaying((value) => !value)}>{playing ? "PAUSE" : "PLAY"} TIMELINE</button><button type="button" onClick={() => { setPlaying(false); setTimelineProgress(0); }}>RESET</button><button type="button" onClick={() => setSpeed((value) => value === 2 ? 0.5 : value + 0.5)}>SPEED {speed}×</button><button type="button" onClick={() => setCameraMode((value) => value === "orbit" ? "top" : "orbit")}>{cameraMode === "orbit" ? "TOP VIEW" : "ORBIT VIEW"}</button><button type="button" onClick={() => setResetKey((value) => value + 1)}>RESET CAMERA</button></div></div></div>
-        <aside className="clock-panel"><div className="panel-kicker">CASCADE CLOCK <span>STATUS / {state.feasible ? "ACTIVE" : "REVIEW"}</span></div><div className="clock-deadline"><small>LAST SAFE DEPARTURE / SCENARIO ESTIMATE</small><strong className={state.lastSafeDepartureMinutes === null ? "unverified-clock" : ""}>{state.lastSafeDepartureMinutes === null ? "UNVERIFIED" : `${Math.floor(Math.max(0, state.lastSafeDepartureMinutes) / 60)}h ${Math.max(0, state.lastSafeDepartureMinutes) % 60}m`}</strong><span>estimated departure margin / <b>{state.safetyMarginMinutes === null ? "—" : `${Math.max(0, state.safetyMarginMinutes)}m`}</b></span></div><div className="deadline-list command-deadlines"><div><span>Flood arrival</span><b>{state.floodArrivalMinutes === null ? "INSUFFICIENT DATA" : `${Math.floor(state.floodArrivalMinutes / 60)}h ${Math.round(state.floodArrivalMinutes % 60)}m`}</b></div>{state.infrastructure.slice(0, 3).map((asset) => <div key={asset.id}><span>{asset.name}</span><b className={asset.status === "critical" ? "critical-value" : ""}>{`${Math.floor(asset.failureMinutes / 60)}h ${asset.failureMinutes % 60}m`}</b></div>)}</div><div className="command-action"><small>NEXT RECOMMENDED ACTION</small><strong>{state.nextAction}</strong></div><div className="clock-state"><span>MODEL STATUS</span><b><i /> {state.estimationNote}</b></div>{selected ? <div className="asset-inspector command-inspector"><div className="inspector-heading"><span>SELECTED ASSET</span><button type="button" aria-label="Close selected asset" onClick={() => setSelected(null)}>×</button></div><h3>{selected.name}</h3><dl><div><dt>GROUND ELEVATION</dt><dd>{selected.elevation.toFixed(1)}M</dd></div><div><dt>WATER DEPTH</dt><dd>{selectedDepth.toFixed(1)}M</dd></div><div><dt>STATUS</dt><dd className={`status-${selectedStatus.toLowerCase().replace(" ", "-")}`}>{selectedStatus}</dd></div><div><dt>FAILURE DEADLINE</dt><dd>{selected.deadline}</dd></div></dl></div> : <div className="command-hint">SELECT A BUILDING, GATE, PUMP, OR ELECTRICAL ASSET IN THE MODEL TO INSPECT ITS CURRENT STATE.</div>}</aside></section>
-      <section className="ops-grid"><div className="ops-panel risk-monitor"><div className="panel-kicker">01 / INFRASTRUCTURE RISK MONITOR <span>{mode === "demo" ? "SYNTHETIC MODEL" : "CALCULATED"}</span></div><div className="risk-list">{state.infrastructure.slice(0, 3).map((asset) => <div key={asset.id}><i className={asset.status === "critical" ? "critical" : "warning"} /><span><b>{asset.name}</b><small>{asset.failureReason}</small></span><strong className={asset.status === "critical" ? "critical-value" : ""}>{Math.floor(asset.failureMinutes / 60)}h {asset.failureMinutes % 60}m</strong></div>)}</div></div><div className="ops-panel capacity-monitor"><div className="panel-kicker">02 / SHELTER CAPACITY <span>LIMITING RESOURCE</span></div><div className="capacity-card">{["beds", "water", "food", "sanitation"].map((name) => <div className="capacity-row" key={name}><span>{name}</span><i><u style={{ width: `${Math.min(100, (resourceTotals[name as keyof typeof resourceTotals] / Math.max(1, scenario.population.total)) * 100)}%` }} /></i><b>{resourceTotals[name as keyof typeof resourceTotals]}</b></div>)}<div className="capacity-total"><span>EFFECTIVE REMAINING CAPACITY</span><strong>{state.remainingCapacity}</strong></div></div></div><div className="ops-panel shortage-monitor"><div className="shortage-photo"><Image src="/images/cascade-emergency-shelter.jpg" alt="Illustrative emergency storm shelter facility" fill sizes="(max-width: 650px) 100vw, 150px" /></div><div><div className="panel-kicker">03 / CAPACITY DEFICIT</div><strong className="shortage-number">{state.shelterDeficit}</strong><span>people without available shelter capacity</span><small>{state.accessibleDeficit} accessible places still required · {state.accommodationDeficit} category-specific accommodation places required</small></div></div><div className="ops-panel route-monitor"><div className="panel-kicker">04 / EVACUATION ROUTE PLANNER <span>{state.route ? "ROUTE AVAILABLE" : "NO ROUTE"}</span></div><div className="route-strip"><b>TO EVACUATE<br /><strong>{scenario.population.evacuationDemand ?? scenario.population.total}</strong></b><i /><span>{state.route?.name ?? "UNREACHABLE"}</span><i /><b>SHELTER<br /><strong>{state.effectiveCapacity} SAFE</strong></b></div><div className="route-meta"><span>{state.trips} TRIPS REQUIRED</span><span className="safe-text">{state.feasible ? "FEASIBLE PLAN" : "REVIEW CONSTRAINTS"}</span></div></div><div className="ops-panel tracking-monitor"><div className="panel-kicker">05 / STUDENT SAFETY TRACKING <span>{mode === "demo" ? "SYNTHETIC COHORT" : "AGGREGATE INPUT"}</span></div><div className="tracking-grid">{statuses.map(([label, key, kind]) => <div className={kind} key={label}><span>{label}</span><strong>{state.statusCounts[key]}</strong><small>of {scenario.population.total}</small></div>)}</div></div><div className="ops-panel what-if command-what-if"><div className="panel-kicker">06 / WHAT IF? SCENARIO SIMULATOR</div><button type="button" className={`scenario-toggle ${gateOneEarlier ? "active" : ""}`} disabled={mode === "custom" && !disruptedGate} onClick={toggleWhatIf}><span className="toggle-dot" /> {disruptedGateName} closes 2 hours earlier</button><div className="scenario-result"><div><small>ROUTE</small><strong>{state.route?.name ?? "No feasible route"}</strong></div><div><small>LAST SAFE DEPARTURE / SCENARIO ESTIMATE</small><strong className={state.lastSafeDepartureMinutes === null ? "unverified-clock" : ""}>{state.lastSafeDepartureMinutes === null ? "UNVERIFIED" : `${state.lastSafeDepartureMinutes}m`}</strong></div><div><small>RECOMMENDATION</small><strong className={gateOneEarlier ? "alert-text" : ""}>{state.nextAction}</strong></div></div></div></section>
-      <section className="scenario-compare" aria-label="Before and after scenario comparison">
+      </details>
+      <section id="scenario-comparison" className="scenario-compare" aria-label="Before and after scenario comparison">
         <div className="compare-heading"><div><p className="eyebrow glacier">08 / INTERACTIVE SCENARIO COMPARISON</p><h2>See what changes when a gate fails.</h2><p>Same input assumptions, one infrastructure disruption. The comparison is calculated, not live emergency guidance.</p></div><button type="button" className={gateOneEarlier ? "active" : ""} disabled={mode === "custom" && !disruptedGate} onClick={toggleWhatIf}>{gateOneEarlier ? "RESTORE ORIGINAL ↺" : "APPLY EARLY FAILURE ↗"}</button></div>
         <div className="comparison-grid">{comparison.map(item => <div className={`comparison-card ${item.kind === (gateOneEarlier ? "changed" : "baseline") ? "selected" : ""}`} key={item.kind}>
           <div className="comparison-label"><span>{item.label}</span><small>{item.value.feasible ? "CONSTRAINTS MET" : "CONSTRAINTS NOT MET"}</small></div>
@@ -540,14 +650,34 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
           <div className="comparison-meter"><span style={{ width: `${Math.min(100, Math.max(0, (item.value.lastSafeDepartureMinutes ?? 0) / 760 * 100))}%` }} /></div>
           <dl><div><dt>Selected route</dt><dd>{item.value.route?.name ?? "No route"}</dd></div><div><dt>Evacuation duration</dt><dd>{fmtTime(item.value.evacuationMinutes)}</dd></div><div><dt>Shelter shortage</dt><dd>{item.value.shelterDeficit} people</dd></div><div><dt>Accessible shortage</dt><dd>{item.value.accessibleDeficit} places</dd></div></dl>
         </div>)}</div>
+        <div className="comparison-insight" role="status">
+          <div><span>DEPARTURE WINDOW CHANGE</span><strong>{departureDelta === null ? "NOT COMPARABLE" : departureDelta === 0 ? "NO CHANGE" : `${departureDelta > 0 ? "+" : "−"}${Math.abs(departureDelta)} MIN`}</strong><small>{departureDelta === null ? "At least one scenario does not satisfy all planning constraints." : "Difference in calculated last safe departure time."}</small></div>
+          <div><span>ROUTE IMPACT</span><strong>{routeChanged ? "ALTERNATIVE ROUTE" : "SAME ROUTE"}</strong><small>{routeChanged ? `${baseResult.route?.name ?? "No route"} → ${earlyGateResult.route?.name ?? "No route"}` : "The configured route selection did not change."}</small></div>
+          <div><span>FEASIBILITY</span><strong>{baseResult.feasible && earlyGateResult.feasible ? "BOTH FEASIBLE" : baseResult.feasible ? "EARLY FAILURE AT RISK" : earlyGateResult.feasible ? "BASELINE AT RISK" : "REVIEW BOTH"}</strong><small>Based on synthetic timing, shelter and transport constraints.</small></div>
+        </div>
+        <div className="comparison-verdict"><span>WHAT CHANGED / CALCULATED VERDICT</span><p>{inputsPending ? "Inputs have changed. Run Simulation before using this comparison." : comparisonSummary}</p></div>
         <p className="comparison-warning">{!baseResult.feasible || !earlyGateResult.feasible ? "Both departure values are intentionally marked UNVERIFIED when shelter, transport or timing constraints prevent a complete plan. Fix deficits in Custom Scenario to obtain a feasible departure estimate." : (earlyGateResult.lastSafeDepartureMinutes !== null && baseResult.lastSafeDepartureMinutes !== null && earlyGateResult.lastSafeDepartureMinutes > baseResult.lastSafeDepartureMinutes ? "In these synthetic assumptions the alternative gate stays open longer, so the computed departure window can increase even though travel takes longer. Check gate closure inputs carefully." : "The gate closure changes the route and timing estimate. Verify every input before considering any real-world action.")}</p>
       </section>
-      <section className="relocation-plan" aria-label="Evacuation planning summary">
+      <section id="relocation-summary" className="relocation-plan" aria-label="Evacuation planning summary">
         <div><p className="eyebrow glacier">09 / PLAN AT A GLANCE</p><h2>From risk to relocation.</h2><p>Automatically recalculated from the current scenario. These are planning estimates, not real-world dispatch instructions.</p></div>
         <div className="plan-metrics"><div><span>EVACUATION DEMAND</span><strong>{scenario.population.evacuationDemand ?? scenario.population.total}</strong><small>people</small></div><div><span>AVAILABLE SEATS / WAVE</span><strong>{state.transportCapacity}</strong><small>seats</small></div><div><span>ESTIMATED BUS TRIPS</span><strong>{state.trips}</strong><small>waves</small></div><div><span>REMAINING SHELTER SPACE</span><strong>{state.remainingCapacity}</strong><small>places</small></div></div>
-        <div className="plan-recommendation"><b>RECOMMENDED NEXT STEP</b><span>{state.nextAction}</span><button type="button" onClick={() => downloadScenarioPdf(scenario, baseResult, earlyGateResult)}>EXPORT FULL REPORT ↗</button></div>
+        <div className="plan-recommendation"><b>RECOMMENDED NEXT STEP</b><span>{state.nextAction}</span></div>
       </section>
+      <details className="methodology-notes">
+        <summary>How these estimates work <span>MODEL ASSUMPTIONS &amp; LIMITATIONS +</span></summary>
+        <div className="methodology-grid">
+          <div><strong>Flood arrival</strong><p>Uses the provided arrival-time assumption, or estimates time as flood depth ÷ rise rate when possible. Neither method is a calibrated forecast.</p></div>
+          <div><strong>Infrastructure &amp; routes</strong><p>Configured failure times and dependencies affect route closures. The early-gate what-if shifts the selected gate failure by two hours.</p></div>
+          <div><strong>Shelter &amp; transport</strong><p>Effective shelter places are limited by beds, water, food, sanitation and occupancy. Trip estimates use available vehicle seats and route timing.</p></div>
+          <div><strong>Safe departure constraint</strong><p>The displayed departure estimate requires all modeled constraints to be satisfied. Unverified means the prototype cannot establish a feasible planning window.</p></div>
+        </div>
+        <p className="methodology-warning">Synthetic, deterministic planning estimates only. Not a live warning, certified hydrological forecast or operational evacuation instruction.</p>
+      </details>
       <section className="action-timeline"><div className="panel-kicker">07 / EMERGENCY ACTION TIMELINE <span>{state.estimationNote}</span></div><div className="action-steps">{["FLOOD PULSE DETECTED", "INFRASTRUCTURE FAILURES PREDICTED", "SAFE DEADLINE CALCULATED", "SHELTER CAPACITY VERIFIED", "ROUTES + BUSES ALLOCATED", "STUDENTS ACCOUNTED FOR"].map((step, index) => <div key={step} className={index < 3 ? "current" : ""}><i>{String(index + 1).padStart(2, "0")}</i><span>{step}</span></div>)}</div></section>
+      <section className="final-report" aria-label="Download completed scenario report">
+        <div><span>FINAL STEP / REPORT</span><h2>Ready to share your scenario?</h2><p>Export the calculated baseline and early-gate-failure comparison as an illustrative planning PDF.</p></div>
+        <button type="button" disabled={inputsPending} onClick={() => downloadScenarioPdf(scenario, baseResult, earlyGateResult)}>{inputsPending ? "RUN SIMULATION BEFORE EXPORT" : "DOWNLOAD PDF REPORT ↓"}</button>
+      </section>
     </div>
   </main>;
 }

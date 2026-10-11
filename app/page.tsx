@@ -44,9 +44,9 @@ export default function Home() {
         <RainOverlay intensity="medium" />
         <div className="hero-content cinematic-content">
           <p className="eyebrow hero-eyebrow">CASCADEOS / FLOOD-TO-SAFE ENGINE</p>
-          <h1>PREDICT FLOOD RISKS.<br /><em className="heading-accent">BEFORE THEY REACH YOU.</em></h1>
+          <h1>SIMULATE FLOOD RISKS.<br /><em className="heading-accent">BEFORE THEY REACH YOU.</em></h1>
           <p className="hero-lede">Simulate rising upstream water, estimate downstream flood arrival time, monitor public rainfall signals, and plan safer relocations with CascadeOS.</p>
-          <div className="hero-actions"><Link href="/simulation" className="dark-cta amber-cta" data-cursor="LAUNCH" data-magnetic>EXPLORE SIMULATION <Arrow /></Link><Link href="#intelligence" className="text-link ivory-link" data-cursor="EXPLORE">DISCOVER CASCADEOS <Arrow /></Link></div>
+          <div className="hero-actions"><Link href="/simulation" className="dark-cta amber-cta" data-cursor="LAUNCH" data-magnetic>EXPLORE SIMULATION <Arrow /></Link><Link href="/simulation#scenario-comparison" className="text-link ivory-link" data-cursor="EXPLORE">VIEW SCENARIO COMPARISON <Arrow /></Link></div>
         </div>
         <div className="hero-readout"><span>FLOOD ETA / ILLUSTRATIVE MODEL</span><b>RAINFALL MONITOR / PUBLIC DATA</b><i>EXPLORE THE UPSTREAM INTELLIGENCE ↓</i></div>
       </section>
