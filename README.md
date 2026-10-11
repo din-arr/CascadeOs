@@ -12,7 +12,7 @@ CascadeOS combines a schematic 3D flood scene, deterministic evacuation-planning
 
 ## Video demo
 
-YouTube walkthrough (approximately 2.5 minutes): **[Add YouTube video link here]**
+YouTube walkthrough : https://youtu.be/_FxrqFlJTow?si=FdvZI-SX539si1Rv
 
 ## The problem
 
