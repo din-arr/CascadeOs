@@ -1,0 +1,8 @@
+{
+  "name": "cascadeos-aws-simulation", "version": "1.0.0", "private": true,
+  "scripts": {
+    "build": "esbuild handler.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js",
+    "package": "npm run build && cd dist && zip -j ../lambda-simulation.zip index.js"
+  },
+  "devDependencies": { "esbuild": "^0.25.0", "typescript": "^5.0.0" }
+}
