@@ -157,6 +157,7 @@ export default function SimulationPage() {
   const [savedScenarios, setSavedScenarios] = useState<Scenario[]>([]);
   const [notice, setNotice] = useState("");
   const [inputsPending, setInputsPending] = useState(false);
+  const [cloudCompute, setCloudCompute] = useState<{ status: "idle" | "running" | "success" | "error"; message: string }>({ status: "idle", message: "" });
   const [cloudSave, setCloudSave] = useState<{ status: "idle" | "saving" | "saved" | "error"; message: string; id: string | null }>({ status: "idle", message: "", id: null });
   const [upstream, setUpstream] = useState<FloodSignalInputs>({
     localDepth: 0.9, upstreamPeakDepth: 1.2, retentionPercent: 25,
@@ -468,7 +469,44 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
       setCloudSave({ status: "error", message: error instanceof Error ? error.message : "AWS save failed. Check server credentials and API availability.", id: null });
     }
   };
-  const resetCloudSave = () => setCloudSave({ status: "idle", message: "", id: null });
+  const runOnAws = async () => {
+    if (inputsPending || cloudCompute.status === "running") {
+      setCloudCompute({ status: "error", message: "Run or validate the current inputs before invoking AWS." });
+      return;
+    }
+    const issues = validateScenario(scenario);
+    if (issues.length) {
+      setCloudCompute({ status: "error", message: "Resolve scenario validation issues before invoking AWS." });
+      return;
+    }
+    setCloudCompute({ status: "running", message: "Running planning calculations on AWS Lambda…" });
+    try {
+      const response = await fetch("/api/aws-simulate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scenario, upstream }),
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const reason = payload && typeof payload === "object" && "error" in payload ? String(payload.error) : "Cloud compute failed";
+        throw new Error(reason);
+      }
+      if (!payload || typeof payload !== "object" || !("engine" in payload) || payload.engine !== "aws-lambda"
+        || !("baseline" in payload) || !("earlierGate" in payload)) throw new Error("Invalid cloud result");
+      const output = payload as { baseline: SimulationResult; earlierGate: SimulationResult };
+      const computed = gateOneEarlier ? output.earlierGate : output.baseline;
+      if (!computed || typeof computed.feasible !== "boolean" || !Array.isArray(computed.infrastructure))
+        throw new Error("Incomplete cloud result");
+      setResult(computed);
+      setCloudCompute({ status: "success", message: "Computed on AWS Lambda. Dashboard updated with cloud results (illustrative)." });
+    } catch (error) {
+      setCloudCompute({ status: "error", message: error instanceof Error ? error.message : "AWS simulation failed" });
+    }
+  };
+  const resetCloudSave = () => {
+    setCloudSave({ status: "idle", message: "", id: null });
+    setCloudCompute({ status: "idle", message: "" });
+  };
   const resetDemo = () => {
     resetCloudSave();
     const next = createDemoScenario();
@@ -533,7 +571,9 @@ const timelineLabel = `${Math.round(timelineProgress * 12)}h / 12h`;
       <details className="scenario-tools"><summary>Saved scenarios &amp; draft tools <span>OPTIONAL</span></summary>
         <div className="scenario-tools-content">
           {savedScenarios.length > 0 && <label className="saved-picker"><span>LOAD SAVED</span><select aria-label="Load a saved scenario" value="" onChange={e => loadSaved(e.target.value)}><option value="">Choose a draft…</option>{savedScenarios.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-          {mode === "custom" && <button type="button" onClick={saveScenario}>SAVE LOCAL DRAFT</button>}
+          <button type="button" disabled={inputsPending || cloudCompute.status === "running"} onClick={() => void runOnAws()}>{cloudCompute.status === "running" ? "RUNNING ON AWS…" : "RUN ON AWS LAMBDA ↗"}</button>
+          {cloudCompute.status !== "idle" && <div className={`cloud-feedback cloud-${cloudCompute.status === "success" ? "saved" : cloudCompute.status === "error" ? "error" : "saving"}`} role="status"><strong>{cloudCompute.status === "success" ? "AWS COMPUTE CONFIRMED" : cloudCompute.status === "error" ? "AWS COMPUTE NOT CONFIRMED" : "AWS COMPUTE IN PROGRESS"}</strong><span>{cloudCompute.message}</span></div>}
+          {mode === "custom" && <button type="button" onClick={saveScenario}>SAVE LOCAL DRAFT</button>
           {mode === "custom" && <button type="button" disabled={inputsPending || cloudSave.status === "saving"} onClick={() => void saveToCloud()}>{cloudSave.status === "saving" ? "SAVING TO AWS…" : "SAVE SCENARIO TO AWS ↗"}</button>}
           {mode === "custom" && <p className="cloud-explainer">Cloud save is separate from local drafts. Clicking sends this scenario to the configured AWS API.</p>}
           {cloudSave.status !== "idle" && <div className={`cloud-feedback cloud-${cloudSave.status}`} role="status"><strong>{cloudSave.status === "saved" ? "AWS API CONFIRMED" : cloudSave.status === "error" ? "AWS SAVE NOT CONFIRMED" : "AWS REQUEST IN PROGRESS"}</strong><span>{cloudSave.message}</span>{cloudSave.status === "saved" && cloudSave.id && <code>Scenario ID: {cloudSave.id}</code>}</div>}
